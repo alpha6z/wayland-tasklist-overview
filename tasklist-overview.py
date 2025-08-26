@@ -16,7 +16,7 @@ get the job done...
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.0.1"
+version = "0.0.2"
 
 import gi
 import subprocess
@@ -111,6 +111,9 @@ class MainWindow(Gtk.Window):
             print("Error retrieving tasks:", e)
             output = ""
         tasks = self.parse_tasks(output)
+        if len(tasks) == 0:
+            self.destroy()
+            Gtk.main_quit()            
         GObject.idle_add(self.display_tasks, tasks)
 
     def parse_tasks(self, output):
