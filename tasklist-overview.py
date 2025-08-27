@@ -16,7 +16,7 @@ get the job done...
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.0.2"
+version = "0.0.3"
 
 import gi
 import subprocess
@@ -88,7 +88,7 @@ class MainWindow(Gtk.Window):
         
     def on_draw(self, widget, cr):
         # don't draw anything: transparent background
-        cr.set_source_rgba(0, 0, 0, 0)
+        cr.set_source_rgba(0, 0, 0, 0.75)
         #cr.set_operator(cr.OPERATOR_SOURCE)
         cr.paint()
         return False
@@ -135,8 +135,8 @@ class MainWindow(Gtk.Window):
         if n == 0:
             return
 
-        spacing_x = 10
-        spacing_y = 10
+        spacing_x = 40
+        spacing_y = 40
         ratio_w, ratio_h = 4, 3
         min_btn_w = 60
         min_btn_h = 45  # keeps 4:3 ratio -> 60x45
