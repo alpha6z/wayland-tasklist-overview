@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Crude overview/exposé-like kludge tested on labwc 0.91 to visually
+Crude overview/exposé-like kludge tested on labwc 0.92 to visually
 display the current tasks and make them active/focused. It aims to 
-be a makeshift replacement for skippy-xd on X/openbox. It might 
-end up working on other wayland compositors, as well. 
+be a wayland makeshift replacement for skippy-xd on X/openbox. It 
+might end up working on other wayland compositors, as well. 
 
 No window previews, at the moment: just big (beautiful) buttons that
 get the job done...
 
 - make sure to install: wlrctl
-- make sure to install the required python dependencies
+- make sure to install: the required python dependencies
 - chmod +x tasklist-overview.py
 - bind it to a convenient key combo / mouse button (rc.xml on labwc)
 """
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.0.3"
+version = "0.0.4"
 
 import gi
 import subprocess
@@ -82,7 +82,7 @@ class MainWindow(Gtk.Window):
         self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
         self.connect("button-press-event", self.on_background_click)
         
-        # sllow the window to receive keyboard events and connect Esc to close
+        # allow the window to receive keyboard events and connect Esc to close
         self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
         self.connect("key-press-event", self.on_key_press)
         
@@ -119,7 +119,6 @@ class MainWindow(Gtk.Window):
     def parse_tasks(self, output):
         tasks = []
         for line in output.splitlines():
-            line = line.strip()
             # do not show itself among the tasks
             if line and not line.startswith(os.path.basename(__file__)):
                 tasks.append(line)
@@ -228,9 +227,12 @@ class MainWindow(Gtk.Window):
     def on_task_click(self, task_name):
         #print(f"Task: {task_name}")
         # wlrctl output formatted as "<window>: <title>"
-        win = task_name.split(":", 1)[0]
         try:
-            subprocess.Popen(["wlrctl", "toplevel", "focus", win])
+            win = task_name.split(":", 1)[0]
+            title = task_name.split(": ", 1)[1] # trim leading space
+            # handle multiple instances of the same program (by title)
+            subprocess.Popen(["wlrctl", "toplevel", "focus", f"app_id:{win}", f"title:{title}"])
+            print("Selected:", f"[{win}] [{title}]")
         except Exception as e:
             print("Error focusing:", e)
         self.destroy()
