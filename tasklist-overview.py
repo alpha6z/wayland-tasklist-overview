@@ -1,40 +1,66 @@
 #!/usr/bin/env python3
 """
-Crude overview/exposé-like kludge tested on labwc 0.92 to visually
-display the current tasks and make them active/focused. It aims to 
-be a wayland makeshift replacement for skippy-xd on X/openbox. It 
-might end up working on other wayland compositors, as well. 
+Overview/Exposé-like script tested on labwc 0.91+ to display the current
+tasks and make them active/focused. Other wlroots compositors may work, as well. It aims to be a wayland replacement for skippy-xd.
 
-No window previews, at the moment: just big (beautiful) buttons that
-get the job done...
+No thumbnails: version 0.5 adds proper icons for each task and a few css
+styles to match your preferences.
 
 - make sure to install: wlrctl
-- make sure to install: the required python dependencies
+- make sure to install the required python dependencies
 - chmod +x tasklist-overview.py
 - bind it to a convenient key combo / mouse button (rc.xml on labwc)
+- enjoy!
 """
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.0.4"
+version = "0.5"
 
 import gi
 import subprocess
 import threading
 import os
 
-gi.require_version('Gtk', '3.0')
+gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GObject, GdkX11, GLib, Pango
 
+
 class TaskWidget(Gtk.Button):
-    def __init__(self, task_name, on_click_callback):
+    def __init__(self, task_name, on_click_callback, icon_pixbuf=None):
         super().__init__()
         self.task_name = task_name
-        self.set_size_request(140, 70)  # rectangle
-        self.set_label(task_name)
         self.connect("clicked", self.on_click)
         self.on_click_callback = on_click_callback
         self.set_relief(Gtk.ReliefStyle.NONE)
+
+        # build content: vbox with icon (image) centered and label below
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        vbox.set_homogeneous(False)
+        vbox.set_margin_top(6)
+        vbox.set_margin_bottom(6)
+        vbox.set_margin_start(6)
+        vbox.set_margin_end(6)
+
+        if icon_pixbuf:
+            img = Gtk.Image.new_from_pixbuf(icon_pixbuf)
+        else:
+            img = Gtk.Image.new()  # empty placeholder
+
+        img.set_halign(Gtk.Align.CENTER)
+        img.set_valign(Gtk.Align.CENTER)
+
+        lbl = Gtk.Label(label=task_name)
+        lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        lbl.set_xalign(0.5)
+        lbl.set_yalign(0.5)
+        lbl.set_single_line_mode(True)
+
+        vbox.pack_start(img, True, True, 0)
+        vbox.pack_start(lbl, False, False, 0)
+
+        self.add(vbox)
+
         css = b"""
         button {
             background-color: rgba(52,152,219,0.9);
@@ -46,10 +72,13 @@ class TaskWidget(Gtk.Button):
         """
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(css)
-        Gtk.StyleContext.add_provider(self.get_style_context(), style_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        Gtk.StyleContext.add_provider(
+            self.get_style_context(), style_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+        )
 
     def on_click(self, widget):
         self.on_click_callback(self.task_name)
+
 
 class MainWindow(Gtk.Window):
     def __init__(self):
@@ -72,24 +101,30 @@ class MainWindow(Gtk.Window):
         # list of widgets for positioning
         self.task_widgets = []
 
+        # icon theme
+        self.icon_theme = Gtk.IconTheme.get_default()
+
         # load tasks
         GLib.idle_add(self.refresh_tasks)
 
         # settings to ensure the background is transparent
         self.connect("draw", self.on_draw)
 
-        # intercept button-press events on the background to consume them (the window blocks clicks), buttons on top will still receive them because they are children and have their own handling
-        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
+        # intercept button-press events on the background to consume them
+        self.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK
+            | Gdk.EventMask.BUTTON_RELEASE_MASK
+            | Gdk.EventMask.POINTER_MOTION_MASK
+        )
         self.connect("button-press-event", self.on_background_click)
-        
+
         # allow the window to receive keyboard events and connect Esc to close
         self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
         self.connect("key-press-event", self.on_key_press)
-        
+
     def on_draw(self, widget, cr):
-        # don't draw anything: transparent background
-        cr.set_source_rgba(0, 0, 0, 0.75)
-        #cr.set_operator(cr.OPERATOR_SOURCE)
+        # overlay alpha to play with transparency
+        cr.set_source_rgba(0, 0, 0, 0.85)
         cr.paint()
         return False
 
@@ -105,7 +140,12 @@ class MainWindow(Gtk.Window):
 
     def load_tasks(self):
         try:
-            result = subprocess.run(["wlrctl", "toplevel", "list"], capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                ["wlrctl", "toplevel", "list"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
             output = result.stdout
         except Exception as e:
             print("Error retrieving tasks:", e)
@@ -113,7 +153,7 @@ class MainWindow(Gtk.Window):
         tasks = self.parse_tasks(output)
         if len(tasks) == 0:
             self.destroy()
-            Gtk.main_quit()            
+            Gtk.main_quit()
         GObject.idle_add(self.display_tasks, tasks)
 
     def parse_tasks(self, output):
@@ -123,6 +163,42 @@ class MainWindow(Gtk.Window):
             if line and not line.startswith(os.path.basename(__file__)):
                 tasks.append(line)
         return tasks
+
+    def get_icon_for_task(self, task_name, size):
+        # try to infer an icon name from the window "app_id" or title
+        icon = None
+        try:
+            win = task_name.split(":", 1)[0]
+            candidate_names = []
+            candidate_names.append(win)
+            title = task_name.split(": ", 1)[1] if ": " in task_name else ""
+            for word in title.split():
+                if len(word) > 2:
+                    candidate_names.append(word.lower())
+            seen = set()
+            candidate_names = [
+                n for n in candidate_names if not (n in seen or seen.add(n))
+            ]
+            for name in candidate_names:
+                try:
+                    if self.icon_theme.has_icon(name):
+                        icon = self.icon_theme.load_icon(name, size, 0)
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # fallback to generic application icon
+        if icon is None:
+            try:
+                if self.icon_theme.has_icon("application-x-executable"):
+                    icon = self.icon_theme.load_icon("application-x-executable", size, 0)
+                elif self.icon_theme.has_icon("application-default-icon"):
+                    icon = self.icon_theme.load_icon("application-default-icon", size, 0)
+            except Exception:
+                icon = None
+        return icon
 
     def display_tasks(self, tasks):
         # calculate window dimensions
@@ -147,26 +223,20 @@ class MainWindow(Gtk.Window):
             avail_h = win_h - (rows + 1) * spacing_y
             if avail_w <= 0 or avail_h <= 0:
                 continue
-            # maximum width per cell and maximum height per cell
             cell_w = avail_w / cols
             cell_h = avail_h / rows
-            # adapt button size to 4:3 ratio
-            # try to maximize width while keeping ratio
             btn_w = min(cell_w, cell_h * (ratio_w / ratio_h))
             btn_h = btn_w * (ratio_h / ratio_w)
-            # if for some reason btn_h > cell_h, resize
             if btn_h > cell_h:
                 btn_h = cell_h
                 btn_w = btn_h * (ratio_w / ratio_h)
             if btn_w < min_btn_w or btn_h < min_btn_h:
-                # if too small, ignore this configuration
                 continue
             area = btn_w * btn_h
             if best is None or area > best[0] * best[1]:
                 best = (btn_w, btn_h, cols, rows)
 
         if best is None:
-            # fallback: force at least one column with minimum size
             cols = 1
             rows = n
             btn_w = max(min_btn_w, int((win_w - 2 * spacing_x) / cols))
@@ -190,12 +260,25 @@ class MainWindow(Gtk.Window):
                 pass
         self.task_widgets = []
 
-        # shared CSS
-        css = b"""
-        button { background-color: rgba(52,152,219,0.9); color: white; border-radius: 6px; border: 0px; font-weight: bold; }
+        # shared CSS: change this part to match your theme/preferences
+        css_skyblue = b"""
+        button { background-color: rgba(52,152,219,0.9); color: white; border-radius: 6px; border: 0px; font-weight: bold; } button:hover { background-color: rgba(41,128,185,0.95); box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
         """
+        
+        css_gray = b"""
+        button { background-color: rgba(120,120,120,0.9); color: white; border-radius: 6px; border: 0px; font-weight: bold; } button:hover { background-color: rgba(90,90,90,0.95); box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
+        """
+        
+        css_darkgray = b"""button { background-color: rgba(70,70,70,0.92); color: white; border-radius: 6px; border: 0px; font-weight: bold; } button:hover { background-color: rgba(40,40,40,0.98); box-shadow: 0 6px 18px rgba(0,0,0,0.55); }"""
+        
+        css_nordic = b"""button { background-color: rgba(76,86,100,0.98); color: #ECEFF4; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); font-weight: bold; } button:hover { background-color: rgba(96,120,140,1.0); box-shadow: 0 6px 18px rgba(2,6,23,0.55); }"""
+        
+        css = css_nordic
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(css)
+
+        # icon size relative to button height (%)
+        icon_size = max(16, int(btn_h * 0.30))
 
         for idx, task_name in enumerate(tasks):
             r = idx // cols
@@ -203,35 +286,29 @@ class MainWindow(Gtk.Window):
             x = start_x + spacing_x + c * (btn_w + spacing_x)
             y = start_y + spacing_y + r * (btn_h + spacing_y)
 
-            btn = Gtk.Button()
-            btn.set_relief(Gtk.ReliefStyle.NONE)
-            btn.set_size_request(btn_w, btn_h)
-            Gtk.StyleContext.add_provider(btn.get_style_context(), style_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+            # load icon pixbuf for this task (may be None)
+            pixbuf = self.get_icon_for_task(task_name, icon_size)
 
-            lbl = Gtk.Label(label=task_name)
-            lbl.set_ellipsize(Pango.EllipsizeMode.END)
-            lbl.set_xalign(0.5)
-            lbl.set_yalign(0.5)
-            lbl.set_single_line_mode(True)
-            lbl.set_margin_start(6)
-            lbl.set_margin_end(6)
+            # create TaskWidget which already contains an image+label vertically centered
+            tw = TaskWidget(task_name, self.on_task_click, icon_pixbuf=pixbuf)
+            tw.set_size_request(btn_w, btn_h)
+            Gtk.StyleContext.add_provider(
+                tw.get_style_context(), style_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
+            )
 
-            btn.add(lbl)
-            btn.connect("clicked", lambda b, name=task_name: self.on_task_click(name))
+            tw.connect("clicked", lambda b, name=task_name: self.on_task_click(name))
 
-            self.fixed.put(btn, x, y)
-            btn.show_all()
-            self.task_widgets.append(btn)
-
+            self.fixed.put(tw, x, y)
+            tw.show_all()
+            self.task_widgets.append(tw)
 
     def on_task_click(self, task_name):
-        #print(f"Task: {task_name}")
-        # wlrctl output formatted as "<window>: <title>"
         try:
             win = task_name.split(":", 1)[0]
-            title = task_name.split(": ", 1)[1] # trim leading space
-            # handle multiple instances of the same program (by title)
-            subprocess.Popen(["wlrctl", "toplevel", "focus", f"app_id:{win}", f"title:{title}"])
+            title = task_name.split(": ", 1)[1] if ": " in task_name else ""
+            subprocess.Popen(
+                ["wlrctl", "toplevel", "focus", f"app_id:{win}", f"title:{title}"]
+            )
             print("Selected:", f"[{win}] [{title}]")
         except Exception as e:
             print("Error focusing:", e)
@@ -244,7 +321,8 @@ class MainWindow(Gtk.Window):
             self.destroy()
             Gtk.main_quit()
             return True
-        return False        
+        return False
+
 
 def main():
     print("Simple tasklist overview")
@@ -252,6 +330,7 @@ def main():
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
     Gtk.main()
+
 
 if __name__ == "__main__":
     main()
