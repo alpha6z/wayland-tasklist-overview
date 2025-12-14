@@ -15,7 +15,7 @@ styles to match your preferences.
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.5.1"
+version = "0.5.2"
 
 import gi
 import subprocess
@@ -34,7 +34,6 @@ class TaskWidget(Gtk.Button):
         self.on_click_callback = on_click_callback
         self.set_relief(Gtk.ReliefStyle.NONE)
 
-        # build content: vbox with icon (image) centered and label below
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         vbox.set_homogeneous(False)
         vbox.set_margin_top(6)
@@ -45,7 +44,7 @@ class TaskWidget(Gtk.Button):
         if icon_pixbuf:
             img = Gtk.Image.new_from_pixbuf(icon_pixbuf)
         else:
-            img = Gtk.Image.new()  # empty placeholder
+            img = Gtk.Image.new()
 
         img.set_halign(Gtk.Align.CENTER)
         img.set_valign(Gtk.Align.CENTER)
@@ -61,15 +60,7 @@ class TaskWidget(Gtk.Button):
 
         self.add(vbox)
 
-        css = b"""
-        button {
-            background-color: rgba(52,152,219,0.9);
-            color: white;
-            border-radius: 6px;
-            border: 0px;
-            font-weight: bold;
-        }
-        """
+        css = b"button { background-color: rgba(76,86,100,0.98); color: #ECEFF4; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); font-weight: bold; } button:hover { background-color: rgba(96,120,140,1.0); box-shadow: 0 6px 18px rgba(2,6,23,0.55); }"
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(css)
         Gtk.StyleContext.add_provider(
@@ -104,13 +95,25 @@ class MainWindow(Gtk.Window):
         # icon theme
         self.icon_theme = Gtk.IconTheme.get_default()
 
+        # ensure we receive keyboard events
+        self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
+
+        # robust ESC handling: accel group + key-press-event + focus/grab attempts
+        self.accel = Gtk.AccelGroup()
+        self.add_accel_group(self.accel)
+        key, mod = Gtk.accelerator_parse("Escape")
+        # connect accelerator; GTK expects a function with specific signature, use lambda wrapper
+        self.accel.connect(key, mod, Gtk.AccelFlags.VISIBLE, lambda *_: (self.close_and_quit(), None))
+
+        self.connect("key-press-event", self.on_key_press)
+
         # load tasks
         GLib.idle_add(self.refresh_tasks)
 
-        # settings to ensure the background is transparent
+        # draw handler for semi-transparent overlay
         self.connect("draw", self.on_draw)
 
-        # intercept button-press events on the background to consume them
+        # intercept background clicks
         self.add_events(
             Gdk.EventMask.BUTTON_PRESS_MASK
             | Gdk.EventMask.BUTTON_RELEASE_MASK
@@ -118,21 +121,16 @@ class MainWindow(Gtk.Window):
         )
         self.connect("button-press-event", self.on_background_click)
 
-        # allow the window to receive keyboard events and connect Esc to close
-        self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        self.connect("key-press-event", self.on_key_press)
-
-    def on_key_press(self, widget, event):
-        # close on ESC key press
-        if event.keyval == Gdk.KEY_Escape:
+    def close_and_quit(self):
+        try:
             self.destroy()
-            Gtk.main_quit()
-            return True
-        return False
+        except Exception:
+            pass
+        Gtk.main_quit()
 
     def on_draw(self, widget, cr):
-        # overlay alpha to play with transparency
-        cr.set_source_rgba(0, 0, 0, 0.85)
+        # stronger dark overlay to simulate blur/obscuring background
+        cr.set_source_rgba(0, 0, 0, 0.75)
         cr.paint()
         return False
 
@@ -142,7 +140,10 @@ class MainWindow(Gtk.Window):
 
     def refresh_tasks(self):
         for w in self.task_widgets:
-            self.fixed.remove(w)
+            try:
+                self.fixed.remove(w)
+            except Exception:
+                pass
         self.task_widgets = []
         threading.Thread(target=self.load_tasks, daemon=True).start()
 
@@ -160,33 +161,28 @@ class MainWindow(Gtk.Window):
             output = ""
         tasks = self.parse_tasks(output)
         if len(tasks) == 0:
-            self.destroy()
-            Gtk.main_quit()
+            GObject.idle_add(self.close_and_quit)
+            return
         GObject.idle_add(self.display_tasks, tasks)
 
     def parse_tasks(self, output):
         tasks = []
         for line in output.splitlines():
-            # do not show itself among the tasks
             if line and not line.startswith(os.path.basename(__file__)):
                 tasks.append(line)
         return tasks
 
     def get_icon_for_task(self, task_name, size):
-        # try to infer an icon name from the window "app_id" or title
         icon = None
         try:
             win = task_name.split(":", 1)[0]
-            candidate_names = []
-            candidate_names.append(win)
+            candidate_names = [win]
             title = task_name.split(": ", 1)[1] if ": " in task_name else ""
             for word in title.split():
                 if len(word) > 2:
                     candidate_names.append(word.lower())
             seen = set()
-            candidate_names = [
-                n for n in candidate_names if not (n in seen or seen.add(n))
-            ]
+            candidate_names = [n for n in candidate_names if not (n in seen or seen.add(n))]
             for name in candidate_names:
                 try:
                     if self.icon_theme.has_icon(name):
@@ -197,7 +193,6 @@ class MainWindow(Gtk.Window):
         except Exception:
             pass
 
-        # fallback to generic application icon
         if icon is None:
             try:
                 if self.icon_theme.has_icon("application-x-executable"):
@@ -209,7 +204,6 @@ class MainWindow(Gtk.Window):
         return icon
 
     def display_tasks(self, tasks):
-        # calculate window dimensions
         win_w, win_h = self.get_size()
         if win_w <= 0 or win_h <= 0:
             win_w, win_h = 800, 600
@@ -222,9 +216,9 @@ class MainWindow(Gtk.Window):
         spacing_y = 40
         ratio_w, ratio_h = 4, 3
         min_btn_w = 60
-        min_btn_h = 45  # keeps 4:3 ratio -> 60x45
+        min_btn_h = 45
 
-        best = None  # (btn_w, btn_h, cols, rows)
+        best = None
         for cols in range(1, n + 1):
             rows = (n + cols - 1) // cols
             avail_w = win_w - (cols + 1) * spacing_x
@@ -260,7 +254,6 @@ class MainWindow(Gtk.Window):
         start_x = max(10, (win_w - total_w) // 2)
         start_y = max(10, (win_h - total_h) // 2)
 
-        # remove any existing widgets
         for w in self.task_widgets:
             try:
                 self.fixed.remove(w)
@@ -285,8 +278,7 @@ class MainWindow(Gtk.Window):
         style_provider = Gtk.CssProvider()
         style_provider.load_from_data(css)
 
-        # icon size relative to button height (%)
-        icon_size = max(16, int(btn_h * 0.30))
+        icon_size = max(12, int(btn_h * 0.30))  # slightly smaller icons by default
 
         for idx, task_name in enumerate(tasks):
             r = idx // cols
@@ -294,10 +286,8 @@ class MainWindow(Gtk.Window):
             x = start_x + spacing_x + c * (btn_w + spacing_x)
             y = start_y + spacing_y + r * (btn_h + spacing_y)
 
-            # load icon pixbuf for this task (may be None)
             pixbuf = self.get_icon_for_task(task_name, icon_size)
 
-            # create TaskWidget which already contains an image+label vertically centered
             tw = TaskWidget(task_name, self.on_task_click, icon_pixbuf=pixbuf)
             tw.set_size_request(btn_w, btn_h)
             Gtk.StyleContext.add_provider(
@@ -320,8 +310,13 @@ class MainWindow(Gtk.Window):
             print("Selected:", f"[{win}] [{title}]")
         except Exception as e:
             print("Error focusing:", e)
-        self.destroy()
-        Gtk.main_quit()
+        self.close_and_quit()
+
+    def on_key_press(self, widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.close_and_quit()
+            return True
+        return False
 
 
 def main():
@@ -329,6 +324,20 @@ def main():
     win = MainWindow()
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
+
+    # force focus and attempt keyboard grab for robustness
+    try:
+        win.grab_focus()
+    except Exception:
+        pass
+    try:
+        gwin = win.get_window()
+        if gwin is not None:
+            # attempt keyboard grab; may fail depending on compositor
+            gwin.keyboard_grab(0)
+    except Exception:
+        pass
+
     Gtk.main()
 
 
