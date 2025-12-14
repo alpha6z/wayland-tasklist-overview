@@ -333,7 +333,7 @@ def main():
     try:
         gwin = win.get_window()
         if gwin is not None:
-            # attempt keyboard grab; may fail depending on compositor
+            # attempt keyboard grab
             gwin.keyboard_grab(0)
     except Exception:
         pass
