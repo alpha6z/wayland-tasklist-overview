@@ -15,7 +15,7 @@ styles to match your preferences.
 
 author = "alpha6z"
 license = "GPLv3"
-version = "0.5"
+version = "0.5.1"
 
 import gi
 import subprocess
@@ -121,6 +121,14 @@ class MainWindow(Gtk.Window):
         # allow the window to receive keyboard events and connect Esc to close
         self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
         self.connect("key-press-event", self.on_key_press)
+
+    def on_key_press(self, widget, event):
+        # close on ESC key press
+        if event.keyval == Gdk.KEY_Escape:
+            self.destroy()
+            Gtk.main_quit()
+            return True
+        return False
 
     def on_draw(self, widget, cr):
         # overlay alpha to play with transparency
@@ -314,14 +322,6 @@ class MainWindow(Gtk.Window):
             print("Error focusing:", e)
         self.destroy()
         Gtk.main_quit()
-
-    def on_key_press(self, widget, event):
-        # exit on ESC press
-        if event.keyval == Gdk.KEY_Escape:
-            self.destroy()
-            Gtk.main_quit()
-            return True
-        return False
 
 
 def main():
